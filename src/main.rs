@@ -169,7 +169,7 @@ impl App {
             let indent_size = h.param(1).unwrap().value().as_u64().unwrap_or(0);
             let indent = " ".repeat(indent_size as usize);
 
-            out.write(&format!("{}{}", indent, data.replace("\n", &format!("\n{}", indent))))?;
+            out.write(&format!("{}", data.replace("\n", &format!("\n{}", indent))))?;
             Ok(())
         }));
         h.register_helper("lowercase", Box::new(|h: &Helper, _: &Handlebars, _: &Context, _: &mut RenderContext, out: &mut dyn Output| -> HelperResult {
