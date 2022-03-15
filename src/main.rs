@@ -178,6 +178,12 @@ impl App {
             out.write(&data.to_lowercase())?;
             Ok(())
         }));
+        h.register_helper("uppercase", Box::new(|h: &Helper, _: &Handlebars, _: &Context, _: &mut RenderContext, out: &mut dyn Output| -> HelperResult {
+            let data: String = h.param(0).unwrap().value().render();
+
+            out.write(&data.to_uppercase())?;
+            Ok(())
+        }));
         for input in &opt.input {
             debug!("Scanning input {}", input.to_string_lossy());
             Self::register_templates(&mut h, &ext, input).log().ok();
