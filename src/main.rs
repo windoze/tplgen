@@ -169,20 +169,17 @@ impl App {
             let indent_size = h.param(1).unwrap().value().as_u64().unwrap_or(0);
             let indent = " ".repeat(indent_size as usize);
 
-            out.write(&format!("{}", data.replace("\n", &format!("\n{}", indent))))?;
-            Ok(())
+            out.write(&format!("{}", data.replace("\n", &format!("\n{}", indent)))).map_err(|e| e.into())
         }));
         h.register_helper("lowercase", Box::new(|h: &Helper, _: &Handlebars, _: &Context, _: &mut RenderContext, out: &mut dyn Output| -> HelperResult {
             let data: String = h.param(0).unwrap().value().render();
 
-            out.write(&data.to_lowercase())?;
-            Ok(())
+            out.write(&data.to_lowercase()).map_err(|e| e.into())
         }));
         h.register_helper("uppercase", Box::new(|h: &Helper, _: &Handlebars, _: &Context, _: &mut RenderContext, out: &mut dyn Output| -> HelperResult {
             let data: String = h.param(0).unwrap().value().render();
 
-            out.write(&data.to_uppercase())?;
-            Ok(())
+            out.write(&data.to_uppercase()).map_err(|e| e.into())
         }));
         for input in &opt.input {
             debug!("Scanning input {}", input.to_string_lossy());
