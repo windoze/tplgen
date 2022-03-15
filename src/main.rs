@@ -6,6 +6,8 @@ use serde_json::{from_reader, to_value, Value};
 use walkdir::{WalkDir, DirEntry};
 use std::{fs::File, io::BufReader, path::{PathBuf, Path, self}};
 use structopt::StructOpt;
+use handlebars::{RenderContext, Helper, Context, JsonRender, HelperResult, Output};
+
 
 /// Log if `Result` is an error
 pub trait Logged {
@@ -37,8 +39,8 @@ struct Opt {
     output: PathBuf,
 
     /// Value file in JSON or YAML format, determined by its extension
-    #[structopt(short = "i", long = "values", parse(from_os_str))]
-    values: Option<PathBuf>,
+    #[structopt(short = "i", long = "values")]
+    values: Vec<PathBuf>,
 
     /// Do not use environment variables
     #[structopt(short, long)]
@@ -47,6 +49,10 @@ struct Opt {
     /// Output directory, current directory if not present
     #[structopt(short, long, default_value = ".hbs")]
     extension: String,
+
+    /// Use environment to override value file
+    #[structopt(short, long)]
+    prefer_env: bool,
 
     /// Directory or file name of the template files
     input: Vec<PathBuf>,
@@ -92,36 +98,49 @@ impl App {
         .init();
     }
 
-    fn get_data(opt: &Opt) -> Value {
-        let def = serde_json::Value::Object(serde_json::Map::default());
-        let obj: Value = match &opt.values {
-            Some(path) => {
-                if let Ok(file) = File::open(path) {
-                    let reader = BufReader::new(file);
-                    let ext = path.extension().unwrap_or_default().to_ascii_lowercase();
-                    if (ext == "yaml") || (ext == "yml") {
-                        let yaml_value: serde_yaml::Result<serde_yaml::Value> =
-                            serde_yaml::from_reader(reader).log();
-                        if let Ok(v) = yaml_value {
-                            to_value(v).log().unwrap_or_default()
-                        } else {
-                            def
-                        }
-                    } else {
-                        if ext != "json" {
-                            // Warning
-                        }
-                        from_reader(reader).log().unwrap_or(def)
-                    }
-                } else {
-                    warn!("Cannot read value file {}", path.to_string_lossy());
-                    def
+    fn merge(a: &mut Value, b: &Value) {
+        match (a, b) {
+            (&mut Value::Object(ref mut a), &Value::Object(ref b)) => {
+                for (k, v) in b {
+                    Self::merge(a.entry(k.clone()).or_insert(Value::Null), v);
                 }
             }
-            None => def,
-        };
+            (a, b) => {
+                *a = b.clone();
+            }
+        }
+    }
 
-        if !opt.no_env {
+    fn get_data(opt: &Opt) -> Value {
+        let mut obj = serde_json::Value::Object(serde_json::Map::default());
+        if !opt.no_env && !opt.prefer_env {
+            debug!("Using environment variables");
+            obj = serde_json::Value::Object(std::env::vars().map(|(k, v)| (k, to_value(v).unwrap())).collect());
+        }
+
+        for path in &opt.values {
+            if let Ok(file) = File::open(path) {
+                let reader = BufReader::new(file);
+                let ext = path.extension().unwrap_or_default().to_ascii_lowercase();
+                if (ext == "yaml") || (ext == "yml") {
+                    let yaml_value: serde_yaml::Result<serde_yaml::Value> =
+                        serde_yaml::from_reader(reader).log();
+                    if let Ok(v) = yaml_value {
+                        Self::merge(&mut obj, &to_value(v).log().unwrap_or_default());
+                    }
+                } else {
+                    if ext != "json" {
+                        // Warning
+                        warn!("Read value json file {}", path.to_string_lossy());
+                    }
+                    Self::merge(&mut obj, &from_reader(reader).log().unwrap_or_default())
+                }
+            } else {
+                warn!("Cannot read value file {}", path.to_string_lossy());
+            };
+        }
+
+        if !opt.no_env && opt.prefer_env {
             debug!("Using environment variables");
             let mut mapping = match obj {
                 Value::Object(m) => m,
@@ -135,7 +154,6 @@ impl App {
             }
             Value::Object(mapping)
         } else {
-            debug!("Not using environment variables");
             obj
         }
     }
@@ -143,6 +161,26 @@ impl App {
     fn get_engine(opt: &Opt) -> Handlebars<'static> {
         let ext = opt.get_ext();
         let mut h = Handlebars::new();
+        h.register_helper("indent", Box::new(|h: &Helper, _: &Handlebars, _: &Context, _: &mut RenderContext, out: &mut dyn Output| -> HelperResult {
+            let data: String = h.param(0).unwrap().value().render();
+            if data.is_empty() {
+                return Ok(());
+            }
+            let indent_size = h.param(1).unwrap().value().as_u64().unwrap_or(0);
+            let indent = " ".repeat(indent_size as usize);
+
+            out.write(&format!("{}", data.replace("\n", &format!("\n{}", indent)))).map_err(|e| e.into())
+        }));
+        h.register_helper("lowercase", Box::new(|h: &Helper, _: &Handlebars, _: &Context, _: &mut RenderContext, out: &mut dyn Output| -> HelperResult {
+            let data: String = h.param(0).unwrap().value().render();
+
+            out.write(&data.to_lowercase()).map_err(|e| e.into())
+        }));
+        h.register_helper("uppercase", Box::new(|h: &Helper, _: &Handlebars, _: &Context, _: &mut RenderContext, out: &mut dyn Output| -> HelperResult {
+            let data: String = h.param(0).unwrap().value().render();
+
+            out.write(&data.to_uppercase()).map_err(|e| e.into())
+        }));
         for input in &opt.input {
             debug!("Scanning input {}", input.to_string_lossy());
             Self::register_templates(&mut h, &ext, input).log().ok();
